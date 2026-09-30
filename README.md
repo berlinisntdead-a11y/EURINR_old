@@ -36,6 +36,7 @@ fetch a provider, Google emails you.
    paste in the whole of [`apps-script/Code.gs`](apps-script/Code.gs), and click 💾 Save.
 3. **Set the time zone.** In the Apps Script editor, open ⚙️ Project Settings and set
    *Time zone* to `(GMT+01:00) Paris` (or your own). The schedule runs in this time zone.
+   There's no need to press **Deploy**; saving is enough.
 4. **Authorize and test.** Reload the sheet. A **Rates** menu appears. Choose Rates →
    *Fetch quotes now*. Google asks for permission once: it wants to edit this spreadsheet and
    connect to external services, meaning the providers' calculators. Choose your account, then
