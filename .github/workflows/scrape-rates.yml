@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       providers:
-        description: 'Comma list (wise,xe,instarem,remitly,skrill,revolut) or "all"'
+        description: 'Comma list (wise,xe,instarem,remitly,skrill) or "all"'
         default: all
       debug:
         description: 'Print raw API responses'
@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip

@@ -287,13 +287,12 @@ def with_wise_fallback(collector, name: str, alias: str):
     return collect
 
 
-# Order = order rows are written in. Skrill, Revolut and ScopeX card prices need a logged-in
-# account, so they are not collected here; keep entering those by hand.
+# Order = order rows are written in. Not collected, so keep entering by hand: Revolut (no public
+# calculator, and not in Wise's comparison data), ScopeX (app only), and Skrill card prices.
 PROVIDERS = {
     "wise": wise,
     "xe": xe,
     "instarem": instarem,
     "remitly": with_wise_fallback(remitly, "Remitly", "remitly"),
     "skrill": via_wise_comparison("Skrill", "skrill"),
-    "revolut": via_wise_comparison("Revolut", "revolut"),
 }
