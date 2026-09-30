@@ -133,17 +133,19 @@ def xe(http: Http, amounts):
         })
         best: dict[str, Quote] = {}
         for q in res["quote"]["individualQuotes"]:
-            if q.get("deliveryMethod") != "BankAccount":
+            if q.get("deliveryMethod") != "BankAccount" or q.get("isEnabled") is False:
                 continue
             method = _xe_method(str(q.get("settlementMethod", "")))
             if not method:
                 continue
-            fee = num(q.get("transferFee") or 0)
+            fee = num(q.get("totalFees") or q.get("transferFee") or 0)
             rate = num(q["rate"])
-            got = next((num(q[k]) for k in ("buyAmount", "receiveAmount") if q.get(k) is not None),
-                       (amount - fee) * rate)
-            quote = Quote("XE", method, amount, round(got, 2), fee, rate,
-                          notes=[f"XE settlement: {q.get('settlementMethod')}"])
+            # XE adds its fee on top of the amount. To compare like for like with the other
+            # providers, treat `amount` as the total paid, so the fee comes out of it.
+            got = (amount - fee) * rate
+            quote = Quote("XE", method, amount, round(got, 2), fee, rate, notes=[
+                f"XE settlement: {q.get('settlementMethod')}; XE charges the fee on top, "
+                f"row shows €{amount:g} total paid"])
             if method not in best or quote.recipient_gets > best[method].recipient_gets:
                 best[method] = quote
         out.extend(best.values())
@@ -170,7 +172,7 @@ def instarem(http: Http, amounts):
     pay_ins = http.get(f"{base}/payment-method/fee?{route}&source_amount=1000")["data"]
     out = []
     for m in pay_ins:
-        method = _instarem_method(str(m.get("value", "")))
+        method = _instarem_method(str(m.get("text") or m.get("value", "")))
         if not method:
             continue
         for amount in amounts:
@@ -226,16 +228,30 @@ def remitly(http: Http, amounts):
 
 # ---------------------------------------------------------------- Wise comparison (estimate)
 
-_comparison_cache: dict[float, dict] = {}
+_comparison_cache: dict[tuple, dict] = {}
 
 
-def _comparison(http: Http, amount):
-    if amount not in _comparison_cache:
-        _comparison_cache[amount] = http.get(
+def _comparison(http: Http, amount, country):
+    key = (amount, country)
+    if key not in _comparison_cache:
+        where = f"&sourceCountry={country}" if country else ""
+        _comparison_cache[key] = http.get(
             f"https://wise.com/gateway/v3/comparisons?sourceCurrency={SOURCE}&targetCurrency={TARGET}"
-            f"&sourceCountry={SEND_COUNTRY}&sendAmount={amount}"
+            f"{where}&sendAmount={amount}"
         )
-    return _comparison_cache[amount]
+    return _comparison_cache[key]
+
+
+def _comparison_provider(http: Http, amount, alias):
+    """The provider's entry, from the sending country's data or, failing that, any eurozone country's."""
+    listed = set()
+    for country in (SEND_COUNTRY, None):
+        providers = _comparison(http, amount, country)["providers"]
+        listed |= {p.get("alias") for p in providers}
+        p = next((p for p in providers if p.get("alias") == alias and p.get("quotes")), None)
+        if p:
+            return p
+    raise LookupError(f"{alias} not in Wise comparison data (listed: {', '.join(sorted(filter(None, listed)))})")
 
 
 def via_wise_comparison(name: str, alias: str):
@@ -247,16 +263,27 @@ def via_wise_comparison(name: str, alias: str):
     def collect(http: Http, amounts):
         out = []
         for amount in amounts:
-            p = next((p for p in _comparison(http, amount)["providers"] if p.get("alias") == alias), None)
-            if not p or not p.get("quotes"):
-                raise LookupError(f"{alias} not in Wise comparison data")
-            q = p["quotes"][0]
+            q = _comparison_provider(http, amount, alias)["quotes"][0]
             fee = num(q["fee"])
             rate = num(q["rate"])
             got = num(q["receivedAmount"]) if q.get("receivedAmount") is not None else (amount - fee) * rate
             out.append(Quote(name, "bank transfer", amount, round(got, 2), fee, rate, notes=[
-                f"Estimate from Wise comparison data (collected {q.get('dateCollected', '?')}), not a live quote"]))
+                f"Estimate from Wise comparison data (collected {q.get('dateCollected', '?')[:10]}"
+                f"{', ' + q['sourceCountry'] if q.get('sourceCountry') else ''}), not a live quote"]))
         return out
+    return collect
+
+
+def with_wise_fallback(collector, name: str, alias: str):
+    """Try the provider's own calculator; if it refuses (e.g. Remitly blocks cloud IPs), use Wise's data."""
+    fallback = via_wise_comparison(name, alias)
+
+    def collect(http: Http, amounts):
+        try:
+            return collector(http, amounts)
+        except Exception as e:
+            print(f"  {name} direct quote failed ({type(e).__name__}: {e}); using Wise comparison data")
+            return fallback(http, amounts)
     return collect
 
 
@@ -266,7 +293,7 @@ PROVIDERS = {
     "wise": wise,
     "xe": xe,
     "instarem": instarem,
-    "remitly": remitly,
+    "remitly": with_wise_fallback(remitly, "Remitly", "remitly"),
     "skrill": via_wise_comparison("Skrill", "skrill"),
     "revolut": via_wise_comparison("Revolut", "revolut"),
 }
